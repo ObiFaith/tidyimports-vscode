@@ -1,29 +1,33 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
 import * as vscode from 'vscode';
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
-  vscode.window.showInformationMessage('TidyImports: Tidying your imports!');
-  vscode.workspace.onWillSaveTextDocument(async e => {
-    const document = e.document;
+  context.subscriptions.push(
+    vscode.workspace.onWillSaveTextDocument(async e => {
+      if (e.reason !== vscode.TextDocumentSaveReason.Manual) {
+        return; // Only proceed on manual save (Ctrl + S)
+      }
 
-    const originalText = document.getText();
-    const updatedText = rearrangeImports(originalText);
+      const document = e.document;
+      const originalText = document.getText();
 
-    if (originalText === updatedText) {
-      return;
-    }
+      if (!originalText.includes('import')) {
+        return; // Skip processing if there's no import
+      }
 
-    const fullRange = new vscode.Range(
-      document.positionAt(0),
-      document.positionAt(originalText.length)
-    );
+      const updatedText = rearrangeImports(originalText);
+      if (originalText === updatedText) {
+        return; // Skip if no changes are needed
+      }
 
-    const edit = vscode.TextEdit.replace(fullRange, updatedText);
-    e.waitUntil(Promise.resolve([edit]));
-  });
+      const fullRange = new vscode.Range(
+        document.positionAt(0),
+        document.positionAt(originalText.length)
+      );
+
+      const edit = vscode.TextEdit.replace(fullRange, updatedText);
+      e.waitUntil(Promise.resolve([edit]));
+    })
+  );
 }
 
 function rearrangeImports(text: string): string {
@@ -34,45 +38,38 @@ function rearrangeImports(text: string): string {
   const postImportLines: string[] = [];
 
   let inImportBlock = false;
-  let currentImportBlock: string[] = [];
+  let currentBlock: string[] = [];
+  let startedImports = false;
+  let endedImports = false;
 
-  let reachedImports = false;
-  let doneWithImports = false;
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
+  for (const line of lines) {
     const trimmed = line.trim();
+    const isImport = trimmed.startsWith('import');
 
-    const isImportStart = trimmed.startsWith('import');
-
-    if (!reachedImports && !isImportStart) {
+    if (!startedImports && !isImport) {
       preImportLines.push(line);
       continue;
     }
 
-    if (!doneWithImports) {
-      if (isImportStart) {
-        reachedImports = true;
-        inImportBlock = true;
-        currentImportBlock.push(line);
-
-        // If it's a single-line import, end the block immediately
+    if (!endedImports) {
+      if (isImport) {
+        startedImports = true;
+        currentBlock.push(line);
         if (trimmed.endsWith(';')) {
-          importBlocks.push([...currentImportBlock]);
-          currentImportBlock = [];
-          inImportBlock = false;
+          importBlocks.push(currentBlock);
+          currentBlock = [];
+        } else {
+          inImportBlock = true;
         }
       } else if (inImportBlock) {
-        currentImportBlock.push(line);
-
-        // Check if the current line ends the import
+        currentBlock.push(line);
         if (trimmed.endsWith(';')) {
-          importBlocks.push([...currentImportBlock]);
-          currentImportBlock = [];
+          importBlocks.push(currentBlock);
+          currentBlock = [];
           inImportBlock = false;
         }
       } else {
-        doneWithImports = true;
+        endedImports = true;
         postImportLines.push(line);
       }
     } else {
@@ -80,33 +77,35 @@ function rearrangeImports(text: string): string {
     }
   }
 
-  // In case the file ends with an unterminated import block
-  if (currentImportBlock.length > 0) {
-    importBlocks.push([...currentImportBlock]);
+  if (currentBlock.length > 0) {
+    importBlocks.push(currentBlock);
   }
 
-  // Sort blocks by their string representation
-  const sortedImports = importBlocks
-    .map(block => ({
-      content: block,
-      keyLength:
-        block.length === 1
-          ? block[0].length
-          : block[block.length - 1].trim().length,
-    }))
-    .sort((a, b) => {
-      const lenDiff = a.keyLength - b.keyLength;
-      if (lenDiff !== 0) {
-        return lenDiff;
-      }
-      return a.content.join('\n').localeCompare(b.content.join('\n'));
-    })
-    .map(block => block.content.join('\n'));
+  // Sort import blocks efficiently
+  importBlocks.sort((a, b) => {
+    const lastLineA = a[a.length - 1].trim();
+    const lastLineB = b[b.length - 1].trim();
+
+    const lengthDiff = lastLineA.length - lastLineB.length;
+    if (lengthDiff !== 0) {
+      return lengthDiff; // Shorter last line first
+    }
+
+    const fromA = extractFromPath(lastLineA);
+    const fromB = extractFromPath(lastLineB);
+    return fromA.localeCompare(fromB);
+  });
+
+  const sortedImports = importBlocks.map(block => block.join('\n'));
 
   return [...preImportLines, ...sortedImports, '', ...postImportLines].join(
     '\n'
   );
 }
 
-// This method is called when your extension is deactivated
+function extractFromPath(importStatement: string): string {
+  const match = importStatement.match(/from\s+['"]([^'"]+)['"]/);
+  return match ? match[1] : '';
+}
+
 export function deactivate() {}
