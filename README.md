@@ -1,71 +1,113 @@
-# tidyimports README
+# TidyImports VS Code Extension
 
-This is the README for your extension "tidyimports". After writing up a brief description, we recommend including the following sections.
-
-## Features
-
-Describe specific features of your extension including screenshots of your extension in action. Image paths are relative to this README file.
-
-For example if there is an image subfolder under your extension project workspace:
-
-\!\[feature X\]\(images/feature-x.png\)
-
-> Tip: Many popular extensions utilize animations. This is an excellent way to show off your extension! We recommend short, focused animations that are easy to follow.
-
-## Requirements
-
-If you have any requirements or dependencies, add a section describing those and how to install and configure them.
-
-## Extension Settings
-
-Include if your extension adds any VS Code settings through the `contributes.configuration` extension point.
-
-For example:
-
-This extension contributes the following settings:
-
-* `myExtension.enable`: Enable/disable this extension.
-* `myExtension.thing`: Set to `blah` to do something.
-
-## Known Issues
-
-Calling out known issues can help limit users opening duplicate issues against your extension.
-
-## Release Notes
-
-Users appreciate release notes as you update your extension.
-
-### 1.0.0
-
-Initial release of ...
-
-### 1.0.1
-
-Fixed issue #.
-
-### 1.1.0
-
-Added features X, Y, and Z.
+**TidyImports** is a Visual Studio Code extension that automatically sorts and tidies up import statements whenever you save a file. It ensures your imports are neatly ordered while preserving important directives like `'use client'` or top-level comments.
 
 ---
 
-## Following extension guidelines
+## ✨ Features
 
-Ensure that you've read through the extensions guidelines and follow the best practices for creating your extension.
+- 🔄 Automatically sorts `import` and `from ... import ...` statements on save
 
-* [Extension Guidelines](https://code.visualstudio.com/api/references/extension-guidelines)
+- 🚫 Preserves code above imports (like `'use client'`, comments, or directives)
+- ✅ Supports JavaScript, TypeScript, and Python-style imports
+- 💨 Lightweight and zero-configuration
 
-## Working with Markdown
+---
 
-You can author your README using Visual Studio Code. Here are some useful editor keyboard shortcuts:
+## 🚀 Getting Started
 
-* Split the editor (`Cmd+\` on macOS or `Ctrl+\` on Windows and Linux).
-* Toggle preview (`Shift+Cmd+V` on macOS or `Shift+Ctrl+V` on Windows and Linux).
-* Press `Ctrl+Space` (Windows, Linux, macOS) to see a list of Markdown snippets.
+### 1. Clone the repository
 
-## For more information
+```bash
+git clone https://github.com/ObiFaith/tidyimports-vscode.git
 
-* [Visual Studio Code's Markdown Support](http://code.visualstudio.com/docs/languages/markdown)
-* [Markdown Syntax Reference](https://help.github.com/articles/markdown-basics/)
+cd tidyimports-vscode
+```
 
-**Enjoy!**
+### 2. Install dependencies
+
+```bash
+npm install
+```
+
+### 3. Build the extension
+
+```bash
+npm run compile
+```
+
+### 4. Launch in Extension Development Host
+
+Press `F5` or `Fn + F5` in VS Code to open a new window with the extension loaded.
+
+## 🔧 How It Works
+
+Whenever a supported file is about to be saved, TidyImports:
+
+- Detects the block of import statements
+
+- Sorts them by length and then alphabetically
+- Leaves non-import lines untouched, especially anything above the imports
+- Applies the changes just before save
+
+## ⚙️ Activation Events
+
+The extension activates for:
+
+- JavaScript / TypeScript / Python files
+
+- On workspace startup
+
+## 📂 Folder Structure
+
+```pgsql
+.
+├── .vscode/
+├── src/
+│   └── extension.ts
+├── dist/
+│   └── extension.js (compiled output)
+├── package.json
+├── tsconfig.json
+└── README.md
+```
+
+## 🧪 Example
+
+**Before:**
+
+```ts
+'use client';
+
+import y from 'y-lib';
+import a from 'a-lib';
+import z from 'z-library';
+import b from 'b-lib';
+
+const something = true;
+```
+
+**After Save:**
+
+```ts
+'use client';
+
+import a from 'a-lib';
+import b from 'b-lib';
+import y from 'y-lib';
+import z from 'z-library';
+
+const something = true;
+```
+
+## 📜 License
+
+MIT License
+
+## 🙋‍♂️ Contributing
+
+Pull requests are welcome! For major changes, please open an issue first to discuss what you’d like to change.
+
+## 💡 Author
+
+Created with ❤️ by [Obi Faith](https://github.com/ObiFaith)
