@@ -47,12 +47,19 @@ function rearrangeSection(text: string, keyword: "import" | "export"): string {
   let started = false;
   let ended = false;
   let inBlock = false;
-  let emptyCount = 0;
   let current: string[] = [];
 
-  for (const line of lines) {
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
     const trimmed = line.trim();
-    const isTarget = trimmed.startsWith(keyword);
+
+    // More precise matching: must start with keyword at line beginning
+    const isTarget =
+      /^\s*(import|export)\s/.test(line) &&
+      line.includes(
+        keyword === "import" ? "from" : keyword === "export" ? "{" : ""
+      );
+
     const isEmpty = trimmed === "";
 
     if (!started && !isTarget) {
@@ -63,31 +70,27 @@ function rearrangeSection(text: string, keyword: "import" | "export"): string {
     if (!ended) {
       if (isTarget) {
         started = true;
-        current.push(line);
-        emptyCount = 0;
-
-        if (trimmed.endsWith(";")) {
-          blocks.push(current);
-          current = [];
-        } else {
-          inBlock = true;
-        }
-      } else if (inBlock) {
-        if (!isEmpty) {
-          current.push(line);
-        }
+        inBlock = true;
+        current = [line];
 
         if (trimmed.endsWith(";")) {
           blocks.push(current);
           current = [];
           inBlock = false;
         }
-      } else if (isEmpty) {
-        emptyCount++;
-        if (emptyCount > 2) {
-          ended = true;
+      } else if (inBlock) {
+        current.push(line);
+
+        if (trimmed.endsWith(";") || trimmed.endsWith("}")) {
+          blocks.push(current);
+          current = [];
+          inBlock = false;
         }
-      } else {
+      } else if (isEmpty && started) {
+        // Allow empty lines between imports/exports
+        continue;
+      } else if (started) {
+        // Hit non-import/export code - we're done
         ended = true;
         post.push(line);
       }
@@ -99,12 +102,12 @@ function rearrangeSection(text: string, keyword: "import" | "export"): string {
   if (current.length) {
     blocks.push(current);
   }
+
   if (!blocks.length) {
     return text;
   }
 
   blocks.sort(sortBlocks);
-
   const sorted = blocks.map(sortMultiLineMembers).flat();
 
   return [...pre, ...sorted, "", ...post].join("\n");
