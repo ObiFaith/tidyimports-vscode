@@ -2,21 +2,27 @@ import * as vscode from "vscode";
 
 export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
-    vscode.workspace.onWillSaveTextDocument(async e => {
+    vscode.workspace.onWillSaveTextDocument(e => {
       if (e.reason !== vscode.TextDocumentSaveReason.Manual) {
-        return; // Only proceed on manual save (Ctrl + S)
+        return;
       }
 
       const document = e.document;
       const originalText = document.getText();
 
-      if (!originalText.includes("import")) {
-        return; // Skip processing if there's no import
+      if (
+        !originalText.includes("import") &&
+        !originalText.includes("export")
+      ) {
+        return;
       }
 
-      const updatedText = rearrangeImports(originalText);
-      if (originalText === updatedText) {
-        return; // Skip if no changes are needed
+      // Imports first, exports second (guaranteed order)
+      const withSortedImports = rearrangeSection(originalText, "import");
+      const finalText = rearrangeSection(withSortedImports, "export");
+
+      if (originalText === finalText) {
+        return;
       }
 
       const fullRange = new vscode.Range(
@@ -24,125 +30,125 @@ export function activate(context: vscode.ExtensionContext) {
         document.positionAt(originalText.length)
       );
 
-      const edit = vscode.TextEdit.replace(fullRange, updatedText);
-      e.waitUntil(Promise.resolve([edit]));
+      e.waitUntil(
+        Promise.resolve([vscode.TextEdit.replace(fullRange, finalText)])
+      );
     })
   );
 }
 
-function rearrangeImports(text: string): string {
+function rearrangeSection(text: string, keyword: "import" | "export"): string {
   const lines = text.split("\n");
 
-  const preImportLines: string[] = [];
-  const importBlocks: string[][] = [];
-  const postImportLines: string[] = [];
+  const pre: string[] = [];
+  const blocks: string[][] = [];
+  const post: string[] = [];
 
-  let inImportBlock = false;
-  let currentBlock: string[] = [];
-  let startedImports = false;
-  let endedImports = false;
-  let emptyLineCount = 0;
+  let started = false;
+  let ended = false;
+  let inBlock = false;
+  let emptyCount = 0;
+  let current: string[] = [];
 
-  // Build import blocks
   for (const line of lines) {
     const trimmed = line.trim();
-    const isImport = trimmed.startsWith("import");
+    const isTarget = trimmed.startsWith(keyword);
     const isEmpty = trimmed === "";
 
-    if (!startedImports && !isImport) {
-      preImportLines.push(line);
+    if (!started && !isTarget) {
+      pre.push(line);
       continue;
     }
 
-    if (!endedImports) {
-      if (isImport) {
-        startedImports = true;
-        currentBlock.push(line);
-        emptyLineCount = 0;
+    if (!ended) {
+      if (isTarget) {
+        started = true;
+        current.push(line);
+        emptyCount = 0;
+
         if (trimmed.endsWith(";")) {
-          importBlocks.push(currentBlock);
-          currentBlock = [];
+          blocks.push(current);
+          current = [];
         } else {
-          inImportBlock = true;
+          inBlock = true;
         }
-      } else if (inImportBlock) {
+      } else if (inBlock) {
         if (!isEmpty) {
-          currentBlock.push(line);
+          current.push(line);
         }
+
         if (trimmed.endsWith(";")) {
-          importBlocks.push(currentBlock);
-          currentBlock = [];
-          inImportBlock = false;
+          blocks.push(current);
+          current = [];
+          inBlock = false;
         }
       } else if (isEmpty) {
-        emptyLineCount++;
-        if (emptyLineCount > 2) {
-          endedImports = true;
+        emptyCount++;
+        if (emptyCount > 2) {
+          ended = true;
         }
       } else {
-        endedImports = true;
-        postImportLines.push(line);
+        ended = true;
+        post.push(line);
       }
     } else {
-      postImportLines.push(line);
+      post.push(line);
     }
   }
 
-  if (currentBlock.length > 0) {
-    importBlocks.push(currentBlock);
+  if (current.length) {
+    blocks.push(current);
+  }
+  if (!blocks.length) {
+    return text;
   }
 
-  // Sort import blocks
-  importBlocks.sort((a, b) => {
-    const lastLineA = a[a.length - 1].trim();
-    const lastLineB = b[b.length - 1].trim();
+  blocks.sort(sortBlocks);
 
-    const lengthDiff = lastLineA.length - lastLineB.length;
-    if (lengthDiff !== 0) {
-      return lengthDiff;
-    }
+  const sorted = blocks.map(sortMultiLineMembers).flat();
 
-    return extractFromPath(lastLineA).localeCompare(extractFromPath(lastLineB));
-  });
-
-  // Post-process multi-line imports
-  const sortedImports = importBlocks.map(sortMultiLineImport).flat();
-
-  return [...preImportLines, ...sortedImports, "", ...postImportLines].join(
-    "\n"
-  );
+  return [...pre, ...sorted, "", ...post].join("\n");
 }
 
-//  Sort multi-line import members
-function sortMultiLineImport(block: string[]): string[] {
+function sortBlocks(a: string[], b: string[]): number {
+  const lastA = a[a.length - 1].trim();
+  const lastB = b[b.length - 1].trim();
+
+  const lenDiff = lastA.length - lastB.length;
+  if (lenDiff !== 0) {
+    return lenDiff;
+  }
+
+  return extractFromPath(lastA).localeCompare(extractFromPath(lastB));
+}
+
+function sortMultiLineMembers(block: string[]): string[] {
   if (block.length <= 1 || !block[0].includes("{")) {
     return block;
   }
 
-  const firstLine = block[0];
-  const lastLine = block[block.length - 1];
+  const first = block[0];
+  const last = block[block.length - 1];
 
-  // Collect middle lines as { originalLine, trimmedName }
-  const middleLines = block
+  const middle = block
     .slice(1, -1)
-    .map(line => {
-      const trimmed = line.trim().replace(/,?$/, ""); // remove trailing comma for comparison
-      return { original: line, name: trimmed };
-    })
+    .map(line => ({
+      original: line,
+      name: line.trim().replace(/,?$/, ""),
+    }))
     .filter(l => l.name);
 
-  // Sort by length, then alphabetically (based on the name)
-  middleLines.sort((a, b) => {
+  middle.sort((a, b) => {
     const lenDiff = a.name.length - b.name.length;
     return lenDiff !== 0 ? lenDiff : a.name.localeCompare(b.name);
   });
 
-  // Return first line + sorted original lines + last line
-  return [firstLine, ...middleLines.map(l => l.original), lastLine];
+  return [first, ...middle.map(l => l.original), last];
 }
 
-function extractFromPath(importStatement: string): string {
-  const match = importStatement.match(/from\s+['"]([^'"]+)['"]/);
+// Helper to extract path from import/export for block sorting
+function extractFromPath(statement: string): string {
+  const match = statement.match(/from\s+['"]([^'"]+)['"]/);
   return match ? match[1] : "";
 }
 
