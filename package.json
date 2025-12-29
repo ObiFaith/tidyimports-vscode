@@ -3,6 +3,7 @@
   "displayName": "TidyImports",
   "description": "Automatically sorts import statements by line length (and alphabetically if equal) in a tidy pyramid shape on save. Works with any file type.",
   "version": "0.0.1",
+  "publisher": "FaithDev",
   "engines": {
     "vscode": "^1.54.0"
   },
@@ -10,11 +11,11 @@
     "Other"
   ],
   "activationEvents": [
-  "onStartupFinished",
-  "onLanguage:javascript",
-  "onLanguage:typescript",
-  "onLanguage:python"
-],
+    "onStartupFinished",
+    "onLanguage:javascript",
+    "onLanguage:typescript",
+    "onLanguage:python"
+  ],
   "main": "./dist/extension.js",
   "contributes": {
     "commands": [
@@ -23,6 +24,10 @@
         "title": "Hello World"
       }
     ]
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ObiFaith/tidyimports-vscode"
   },
   "scripts": {
     "vscode:prepublish": "npm run package",

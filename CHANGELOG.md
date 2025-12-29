@@ -6,4 +6,6 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## [Unreleased]
 
-- Initial release
+- Initial release: automatically sort import statements and named export declarations
+- Preserves all value exports (`export const`, `export default`, functions, objects)
+- Supports JS, TS, and Python-style imports

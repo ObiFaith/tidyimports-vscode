@@ -25,14 +25,19 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const fullRange = new vscode.Range(
-        document.positionAt(0),
-        document.positionAt(originalText.length)
-      );
+      // Inside onWillSaveTextDocument
+      const firstLine = document.positionAt(0);
+      const lastLine = document.positionAt(originalText.length);
+      const importExportRange = new vscode.Range(firstLine, lastLine);
 
-      e.waitUntil(
-        Promise.resolve([vscode.TextEdit.replace(fullRange, finalText)])
-      );
+      // Only update if changes exist
+      if (originalText !== finalText) {
+        e.waitUntil(
+          Promise.resolve([
+            vscode.TextEdit.replace(importExportRange, finalText),
+          ])
+        );
+      }
     })
   );
 }
