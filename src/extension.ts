@@ -60,12 +60,12 @@ function rearrangeSection(text: string, keyword: "import" | "export"): string {
 
     // More precise matching: must start with keyword at line beginning
     const isTarget =
-      /^\s*(import|export)\s/.test(line) &&
-      line.includes(
-        keyword === "import" ? "from" : keyword === "export" ? "{" : ""
-      );
+      keyword === "import"
+        ? /^\s*import\s.+\sfrom\s['"].+['"];?\s*$/.test(line)
+        : /^\s*export\s+(\*|\{).+\sfrom\s['"].+['"];?\s*$/.test(line);
 
     const isEmpty = trimmed === "";
+    const isComment = trimmed.startsWith("//") || trimmed.startsWith("/*");
 
     if (!started && !isTarget) {
       pre.push(line);
@@ -91,8 +91,8 @@ function rearrangeSection(text: string, keyword: "import" | "export"): string {
           current = [];
           inBlock = false;
         }
-      } else if (isEmpty && started) {
-        // Allow empty lines between imports/exports
+      } else if ((isEmpty || isComment) && started) {
+        // Allow empty lines and comments between imports/exports
         continue;
       } else if (started) {
         // Hit non-import/export code - we're done
