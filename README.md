@@ -85,15 +85,7 @@ import { useState, useEffect, useCallback, useMemo } from "react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 ```
 
-This works for both single-line and multi-line imports:
-
-```typescript
-// Before
-import { OrderSummary, Home, ProductDetails, Login } from ".";
-
-// After
-import { Home, Login, OrderSummary, ProductDetails } from ".";
-```
+> This works for both single-line and multi-line imports:
 
 ### 🔷 TypeScript Type Import Grouping
 

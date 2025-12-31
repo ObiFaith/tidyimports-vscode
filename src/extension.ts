@@ -52,7 +52,7 @@ function tidyImports(document: vscode.TextDocument): vscode.TextEdit | null {
   const text = document.getText();
   const lines = text.split("\n");
 
-  // Step 1: Detect import/export block
+  // Detect import/export block
   const blockInfo = detectBlock(lines);
   if (!blockInfo) {
     return null;
@@ -61,10 +61,10 @@ function tidyImports(document: vscode.TextDocument): vscode.TextEdit | null {
   const { startLine, endLine, preBlock, postBlock } = blockInfo;
   const blockLines = lines.slice(startLine, endLine + 1);
 
-  // Step 2: Identify separators and groups
+  // Identify separators and groups
   const { separators, groups } = parseBlockIntoGroups(blockLines);
 
-  // Step 3: Parse and process statements
+  // Parse and process statements
   const allTypeImports: Statement[] = [];
   const processedGroups: Group[] = [];
 
@@ -115,15 +115,19 @@ function tidyImports(document: vscode.TextDocument): vscode.TextEdit | null {
     return a.lines[0].localeCompare(b.lines[0]);
   });
 
-  // Step 4: Reconstruct block
+  // Reconstruct block
   const reconstructed = reconstructBlock(
     processedGroups,
     separators,
     allTypeImports
   );
 
-  // Step 5: Build final content
-  const finalContent = [...preBlock, ...reconstructed, ...postBlock].join("\n");
+  // Build final content
+  // Add blank line after imports if postBlock has content
+  const finalContent =
+    postBlock.length > 0 && postBlock[0].trim() !== ""
+      ? [...preBlock, ...reconstructed, "", ...postBlock].join("\n")
+      : [...preBlock, ...reconstructed, ...postBlock].join("\n");
 
   // Create edit
   const fullRange = new vscode.Range(
@@ -134,9 +138,7 @@ function tidyImports(document: vscode.TextDocument): vscode.TextEdit | null {
   return vscode.TextEdit.replace(fullRange, finalContent);
 }
 
-function detectBlock(
-  lines: string[]
-): {
+function detectBlock(lines: string[]): {
   startLine: number;
   endLine: number;
   preBlock: string[];
@@ -164,21 +166,45 @@ function detectBlock(
   }
 
   // Find end
+  let inMultiLineImport = false;
   for (let i = startLine; i < lines.length; i++) {
     const trimmed = lines[i].trim();
 
-    // Check if it's an import/export/require/dynamic line or part of multi-line
+    // Track multi-line import/export state
+    if (
+      (trimmed.startsWith("import ") || trimmed.startsWith("export ")) &&
+      trimmed.includes("{") &&
+      !trimmed.includes("}")
+    ) {
+      inMultiLineImport = true;
+    }
+    if (inMultiLineImport && trimmed.includes("} from")) {
+      inMultiLineImport = false;
+      continue;
+    }
+
+    // Check if it's an import/export/require/dynamic line
+    const isImportLine = trimmed.startsWith("import ");
+    const isExportStatement =
+      trimmed.startsWith("export {") ||
+      trimmed.startsWith("export *") ||
+      trimmed.startsWith("export type {") ||
+      trimmed.startsWith("export type *");
+    const isDynamicOrRequire =
+      trimmed.startsWith("const ") &&
+      (trimmed.includes("require(") || trimmed.includes("import("));
+    const isComment = trimmed.startsWith("//") || trimmed.startsWith("/*");
+    const isBlank = trimmed === "";
+    const isPartOfMultiLine =
+      inMultiLineImport || trimmed === "}" || trimmed.endsWith("} from");
+
     const isImportExportLine =
-      trimmed.startsWith("import ") ||
-      trimmed.startsWith("export ") ||
-      (trimmed.startsWith("const ") &&
-        (trimmed.includes("require(") || trimmed.includes("import("))) ||
-      trimmed === "" ||
-      trimmed.startsWith("//") ||
-      trimmed.startsWith("/*") ||
-      trimmed.includes("from ") ||
-      trimmed === "}" ||
-      trimmed.endsWith("} from");
+      isImportLine ||
+      isExportStatement ||
+      isDynamicOrRequire ||
+      isComment ||
+      isBlank ||
+      isPartOfMultiLine;
 
     if (!isImportExportLine && trimmed !== "") {
       endLine = i - 1;
@@ -273,7 +299,10 @@ function parseStatements(lines: string[], offset: number): Statement[] {
 
     // Check if it's a multi-line import/export
     if (
-      (line.startsWith("import ") || line.startsWith("export ")) &&
+      (line.startsWith("import ") ||
+        line.startsWith("export {") ||
+        line.startsWith("export type {") ||
+        line.startsWith("export *")) &&
       line.includes("{") &&
       !line.includes("}")
     ) {
@@ -292,18 +321,29 @@ function parseStatements(lines: string[], offset: number): Statement[] {
         lines: stmtLines,
         isSingleLine: false,
         isTypeImport: stmtLines[0].trim().startsWith("import type"),
-        isExport: stmtLines[0].trim().startsWith("export"),
+        isExport:
+          stmtLines[0].trim().startsWith("export {") ||
+          stmtLines[0].trim().startsWith("export *") ||
+          stmtLines[0].trim().startsWith("export type"),
         length: 0,
         originalIndex: offset + (i - stmtLines.length),
       });
       i++;
-    } else if (line.startsWith("import ") || line.startsWith("export ")) {
+    } else if (
+      line.startsWith("import ") ||
+      line.startsWith("export {") ||
+      line.startsWith("export type {") ||
+      line.startsWith("export *")
+    ) {
       // Single-line
       statements.push({
         lines: [lines[i]],
         isSingleLine: true,
         isTypeImport: line.startsWith("import type"),
-        isExport: line.startsWith("export"),
+        isExport:
+          line.startsWith("export {") ||
+          line.startsWith("export *") ||
+          line.startsWith("export type"),
         length: 0,
         originalIndex: offset + i,
       });
