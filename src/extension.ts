@@ -381,8 +381,18 @@ function reconstructBlock(
     // Add statements from group
     group.statements.forEach(stmt => {
       // Check if we should insert types here
-      if (!typeInserted && typeImports.length > 0 && stmt.length > typeLength) {
+      if (!typeInserted && typeImports.length > 1 && stmt.length > typeLength) {
         result.push("// types");
+        typeImports.forEach(typeStmt => {
+          result.push(...typeStmt.lines);
+        });
+        typeInserted = true;
+      } else if (
+        !typeInserted &&
+        typeImports.length === 1 &&
+        stmt.length > typeLength
+      ) {
+        // Single type import, no comment
         typeImports.forEach(typeStmt => {
           result.push(...typeStmt.lines);
         });
@@ -393,7 +403,7 @@ function reconstructBlock(
     });
 
     // Check if we should insert types at end of this group
-    if (!typeInserted && typeImports.length > 0) {
+    if (!typeInserted && typeImports.length > 1) {
       const lastStmtLength =
         group.statements.length > 0
           ? group.statements[group.statements.length - 1].length
@@ -401,6 +411,19 @@ function reconstructBlock(
 
       if (typeLength >= lastStmtLength || groupIdx === groups.length - 1) {
         result.push("// types");
+        typeImports.forEach(typeStmt => {
+          result.push(...typeStmt.lines);
+        });
+        typeInserted = true;
+      }
+    } else if (!typeInserted && typeImports.length === 1) {
+      const lastStmtLength =
+        group.statements.length > 0
+          ? group.statements[group.statements.length - 1].length
+          : 0;
+
+      if (typeLength >= lastStmtLength || groupIdx === groups.length - 1) {
+        // Single type import, no comment
         typeImports.forEach(typeStmt => {
           result.push(...typeStmt.lines);
         });
@@ -416,8 +439,13 @@ function reconstructBlock(
   });
 
   // If types still not inserted, add at end
-  if (!typeInserted && typeImports.length > 0) {
+  if (!typeInserted && typeImports.length > 1) {
     result.push("// types");
+    typeImports.forEach(typeStmt => {
+      result.push(...typeStmt.lines);
+    });
+  } else if (!typeInserted && typeImports.length === 1) {
+    // Single type import, no comment
     typeImports.forEach(typeStmt => {
       result.push(...typeStmt.lines);
     });
