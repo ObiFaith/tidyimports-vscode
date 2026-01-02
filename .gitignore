@@ -6,7 +6,7 @@ dist
 node_modules
 
 # VS Code Extension testing
-.vscode-test/
+.vscode*
 
 # Packaged extension files
 *.vsix

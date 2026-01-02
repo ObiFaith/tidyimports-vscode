@@ -1,41 +1,77 @@
 import * as vscode from "vscode";
+import * as t from "@babel/types";
+import { parse } from "@babel/parser";
 
-interface Statement {
-  lines: string[];
-  isSingleLine: boolean;
-  isTypeImport: boolean;
-  isExport: boolean;
+import traverse from "@babel/traverse";
+import generate from "@babel/generator";
+
+interface ImportStatement {
+  node: t.ImportDeclaration;
+  start: number;
+  end: number;
+  text: string;
   length: number;
-  originalIndex: number;
+  isTypeImport: boolean;
 }
 
-interface Separator {
-  content: string;
-  index: number;
-  type: "comment" | "dynamic" | "require";
+interface ExportStatement {
+  node: t.ExportNamedDeclaration | t.ExportAllDeclaration;
+  start: number;
+  end: number;
+  text: string;
+  length: number;
 }
 
-interface Group {
-  statements: Statement[];
-  startIndex: number;
-  endIndex: number;
+interface DynamicImportStatement {
+  text: string;
+  start: number;
+  end: number;
+}
+
+interface CommentStatement {
+  text: string;
+  start: number;
+  end: number;
+}
+
+interface ImportBlock {
+  statements: (
+    | ImportStatement
+    | ExportStatement
+    | DynamicImportStatement
+    | CommentStatement
+  )[];
+  start: number;
+  end: number;
 }
 
 export function activate(context: vscode.ExtensionContext) {
-  // Register the format-on-save handler
+  const outputChannel = vscode.window.createOutputChannel("TidyImports");
+
   const disposable = vscode.workspace.onWillSaveTextDocument(event => {
+    if (event.reason !== vscode.TextDocumentSaveReason.Manual) {
+      return;
+    }
+
     const document = event.document;
 
-    // Only process supported file types
     if (isSupportedFile(document)) {
-      const edit = tidyImports(document);
-      if (edit) {
-        event.waitUntil(Promise.resolve([edit]));
+      try {
+        const edit = tidyImports(document);
+        if (edit) {
+          event.waitUntil(Promise.resolve([edit]));
+        }
+      } catch (error) {
+        outputChannel.appendLine(`TidyImports Error: ${error}`);
+        vscode.window.showErrorMessage(
+          "TidyImports: Failed to organize imports. Check output for details."
+        );
       }
     }
   });
 
   context.subscriptions.push(disposable);
+  context.subscriptions.push(outputChannel);
 }
 
 function isSupportedFile(document: vscode.TextDocument): boolean {
@@ -50,448 +86,461 @@ function isSupportedFile(document: vscode.TextDocument): boolean {
 
 function tidyImports(document: vscode.TextDocument): vscode.TextEdit | null {
   const text = document.getText();
-  const lines = text.split("\n");
 
-  // Detect import/export block
-  const blockInfo = detectBlock(lines);
-  if (!blockInfo) {
+  if (!text.trim()) {
     return null;
   }
 
-  const { startLine, endLine, preBlock, postBlock } = blockInfo;
-  const blockLines = lines.slice(startLine, endLine + 1);
+  try {
+    // Parse with Babel
+    const ast = parse(text, {
+      sourceType: "module",
+      plugins: [
+        "jsx",
+        "typescript",
+        "decorators-legacy",
+        "classProperties",
+        "dynamicImport",
+      ],
+      errorRecovery: true,
+    });
 
-  // Identify separators and groups
-  const { separators, groups } = parseBlockIntoGroups(blockLines);
+    // Extract imports, exports, and other statements
+    const result = extractImportBlock(text, ast);
 
-  // Parse and process statements
-  const allTypeImports: Statement[] = [];
-  const processedGroups: Group[] = [];
+    if (!result || result.statements.length === 0) {
+      return null;
+    }
 
-  groups.forEach(group => {
-    const statements = parseStatements(
-      blockLines.slice(group.startIndex, group.endIndex + 1),
-      group.startIndex
+    // Organize imports
+    const organized = organizeImports(result, text);
+
+    // Build final content
+    const preBlock = text.substring(0, result.start);
+    const postBlock = text.substring(result.end);
+
+    // Add blank line after imports if there's code following
+    const needsBlankLine = postBlock.trim().length > 0;
+    const finalContent =
+      preBlock + organized + (needsBlankLine ? "\n" : "") + postBlock;
+
+    // Create edit
+    const fullRange = new vscode.Range(
+      document.positionAt(0),
+      document.positionAt(text.length)
     );
 
-    // Extract type imports globally
-    const regularStatements: Statement[] = [];
-    statements.forEach(stmt => {
-      if (stmt.isTypeImport) {
-        allTypeImports.push(stmt);
-      } else {
-        regularStatements.push(stmt);
-      }
-    });
-
-    // Sort named imports within each statement
-    regularStatements.forEach(sortNamedImports);
-
-    // Calculate lengths
-    regularStatements.forEach(calculateLength);
-
-    // Sort by length
-    regularStatements.sort((a, b) => {
-      if (a.length !== b.length) {
-        return a.length - b.length;
-      }
-      return a.lines[0].localeCompare(b.lines[0]);
-    });
-
-    processedGroups.push({
-      statements: regularStatements,
-      startIndex: group.startIndex,
-      endIndex: group.endIndex,
-    });
-  });
-
-  // Process type imports
-  allTypeImports.forEach(sortNamedImports);
-  allTypeImports.forEach(calculateLength);
-  allTypeImports.sort((a, b) => {
-    if (a.length !== b.length) {
-      return a.length - b.length;
-    }
-    return a.lines[0].localeCompare(b.lines[0]);
-  });
-
-  // Reconstruct block
-  const reconstructed = reconstructBlock(
-    processedGroups,
-    separators,
-    allTypeImports
-  );
-
-  // Build final content
-  // Add blank line after imports if postBlock has content
-  const finalContent =
-    postBlock.length > 0 && postBlock[0].trim() !== ""
-      ? [...preBlock, ...reconstructed, "", ...postBlock].join("\n")
-      : [...preBlock, ...reconstructed, ...postBlock].join("\n");
-
-  // Create edit
-  const fullRange = new vscode.Range(
-    document.positionAt(0),
-    document.positionAt(text.length)
-  );
-
-  return vscode.TextEdit.replace(fullRange, finalContent);
+    return vscode.TextEdit.replace(fullRange, finalContent);
+  } catch (error) {
+    console.error("TidyImports parsing error:", error);
+    return null;
+  }
 }
 
-function detectBlock(lines: string[]): {
-  startLine: number;
-  endLine: number;
-  preBlock: string[];
-  postBlock: string[];
-} | null {
-  let startLine = -1;
-  let endLine = -1;
+function extractImportBlock(text: string, ast: any): ImportBlock | null {
+  const lines = text.split("\n");
+  const imports: ImportStatement[] = [];
+  const exports: ExportStatement[] = [];
+  const dynamics: DynamicImportStatement[] = [];
+  const comments: CommentStatement[] = [];
 
-  // Find start
-  for (let i = 0; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-    if (
-      trimmed.startsWith("import ") ||
-      trimmed.startsWith("export ") ||
-      (trimmed.startsWith("const ") &&
-        (trimmed.includes("require(") || trimmed.includes("import(")))
-    ) {
-      startLine = i;
-      break;
-    }
+  let firstStatementStart: number | null = null;
+  let lastStatementEnd: number | null = null;
+
+  // Extract imports and re-export statements
+  traverse(ast, {
+    ImportDeclaration(path) {
+      const node = path.node;
+      if (node.loc) {
+        const start = node.loc.start.line - 1;
+        const end = node.loc.end.line - 1;
+        const statementText = lines.slice(start, end + 1).join("\n");
+
+        const isTypeImport = node.importKind === "type";
+
+        imports.push({
+          node,
+          start: node.start!,
+          end: node.end!,
+          text: statementText,
+          length: calculateLength(statementText),
+          isTypeImport,
+        });
+
+        if (firstStatementStart === null || node.start! < firstStatementStart) {
+          firstStatementStart = node.start!;
+        }
+        if (lastStatementEnd === null || node.end! > lastStatementEnd) {
+          lastStatementEnd = node.end!;
+        }
+      }
+    },
+
+    ExportNamedDeclaration(path) {
+      const node = path.node;
+      // Only handle re-exports (export { ... } from '...') or (export * from '...')
+      if (node.source && node.loc) {
+        const start = node.loc.start.line - 1;
+        const end = node.loc.end.line - 1;
+        const statementText = lines.slice(start, end + 1).join("\n");
+
+        exports.push({
+          node,
+          start: node.start!,
+          end: node.end!,
+          text: statementText,
+          length: calculateLength(statementText),
+        });
+
+        if (firstStatementStart === null || node.start! < firstStatementStart) {
+          firstStatementStart = node.start!;
+        }
+        if (lastStatementEnd === null || node.end! > lastStatementEnd) {
+          lastStatementEnd = node.end!;
+        }
+      }
+    },
+
+    ExportAllDeclaration(path) {
+      const node = path.node;
+      if (node.loc) {
+        const start = node.loc.start.line - 1;
+        const end = node.loc.end.line - 1;
+        const statementText = lines.slice(start, end + 1).join("\n");
+
+        exports.push({
+          node,
+          start: node.start!,
+          end: node.end!,
+          text: statementText,
+          length: calculateLength(statementText),
+        });
+
+        if (firstStatementStart === null || node.start! < firstStatementStart) {
+          firstStatementStart = node.start!;
+        }
+        if (lastStatementEnd === null || node.end! > lastStatementEnd) {
+          lastStatementEnd = node.end!;
+        }
+      }
+    },
+
+    VariableDeclaration(path) {
+      const node = path.node;
+      // Check for dynamic imports: const x = import('...')
+      // or require: const x = require('...')
+      if (node.loc) {
+        const start = node.loc.start.line - 1;
+        const end = node.loc.end.line - 1;
+        const statementText = lines.slice(start, end + 1).join("\n");
+
+        const hasDynamicImport = node.declarations.some(
+          decl =>
+            decl.init &&
+            t.isCallExpression(decl.init) &&
+            (t.isImport(decl.init.callee) ||
+              (t.isIdentifier(decl.init.callee) &&
+                decl.init.callee.name === "require"))
+        );
+
+        if (hasDynamicImport) {
+          dynamics.push({
+            text: statementText,
+            start: node.start!,
+            end: node.end!,
+          });
+
+          if (
+            firstStatementStart === null ||
+            node.start! < firstStatementStart
+          ) {
+            firstStatementStart = node.start!;
+          }
+          if (lastStatementEnd === null || node.end! > lastStatementEnd) {
+            lastStatementEnd = node.end!;
+          }
+        } else {
+          // Not an import-related statement, stop here
+          path.stop();
+        }
+      }
+    },
+  });
+
+  // Extract comments in the import block
+  if (
+    ast.comments &&
+    firstStatementStart !== null &&
+    lastStatementEnd !== null
+  ) {
+    ast.comments.forEach((comment: any) => {
+      if (
+        comment.start >= firstStatementStart! &&
+        comment.end <= lastStatementEnd!
+      ) {
+        const start = comment.loc.start.line - 1;
+        const end = comment.loc.end.line - 1;
+        const commentText = lines.slice(start, end + 1).join("\n");
+
+        comments.push({
+          text: commentText,
+          start: comment.start,
+          end: comment.end,
+        });
+      }
+    });
   }
 
-  if (startLine === -1) {
+  if (firstStatementStart === null || lastStatementEnd === null) {
     return null;
   }
 
-  // Find end
-  let inMultiLineImport = false;
-  for (let i = startLine; i < lines.length; i++) {
-    const trimmed = lines[i].trim();
-
-    // Track multi-line import/export state
-    if (
-      (trimmed.startsWith("import ") || trimmed.startsWith("export ")) &&
-      trimmed.includes("{") &&
-      !trimmed.includes("}")
-    ) {
-      inMultiLineImport = true;
-    }
-    if (inMultiLineImport && trimmed.includes("} from")) {
-      inMultiLineImport = false;
-      continue;
-    }
-
-    // Check if it's an import/export/require/dynamic line
-    const isImportLine = trimmed.startsWith("import ");
-    const isExportStatement =
-      trimmed.startsWith("export {") ||
-      trimmed.startsWith("export *") ||
-      trimmed.startsWith("export type {") ||
-      trimmed.startsWith("export type *");
-    const isDynamicOrRequire =
-      trimmed.startsWith("const ") &&
-      (trimmed.includes("require(") || trimmed.includes("import("));
-    const isComment = trimmed.startsWith("//") || trimmed.startsWith("/*");
-    const isBlank = trimmed === "";
-    const isPartOfMultiLine =
-      inMultiLineImport || trimmed === "}" || trimmed.endsWith("} from");
-
-    const isImportExportLine =
-      isImportLine ||
-      isExportStatement ||
-      isDynamicOrRequire ||
-      isComment ||
-      isBlank ||
-      isPartOfMultiLine;
-
-    if (!isImportExportLine && trimmed !== "") {
-      endLine = i - 1;
-      break;
-    }
-  }
-
-  if (endLine === -1) {
-    endLine = lines.length - 1;
-  }
+  // Combine all statements
+  const allStatements = [...imports, ...exports, ...dynamics, ...comments].sort(
+    (a, b) => a.start - b.start
+  );
 
   return {
-    startLine,
-    endLine,
-    preBlock: lines.slice(0, startLine),
-    postBlock: lines.slice(endLine + 1),
+    statements: allStatements,
+    start: firstStatementStart,
+    end: lastStatementEnd,
   };
 }
 
-function parseBlockIntoGroups(blockLines: string[]): {
-  separators: Separator[];
-  groups: Group[];
-} {
-  const separators: Separator[] = [];
-  const groups: Group[] = [];
-
-  let currentGroupStart = 0;
-
-  for (let i = 0; i < blockLines.length; i++) {
-    const line = blockLines[i].trim();
-
-    // Check for separators
-    if (line.startsWith("//") || line.startsWith("/*")) {
-      // Standalone comment
-      if (i > currentGroupStart) {
-        groups.push({
-          statements: [],
-          startIndex: currentGroupStart,
-          endIndex: i - 1,
-        });
-      }
-      separators.push({ content: blockLines[i], index: i, type: "comment" });
-      currentGroupStart = i + 1;
-    } else if (line.startsWith("const ") && line.includes("import(")) {
-      // Dynamic import
-      if (i > currentGroupStart) {
-        groups.push({
-          statements: [],
-          startIndex: currentGroupStart,
-          endIndex: i - 1,
-        });
-      }
-      separators.push({ content: blockLines[i], index: i, type: "dynamic" });
-      currentGroupStart = i + 1;
-    } else if (line.startsWith("const ") && line.includes("require(")) {
-      // Require statement
-      if (i > currentGroupStart) {
-        groups.push({
-          statements: [],
-          startIndex: currentGroupStart,
-          endIndex: i - 1,
-        });
-      }
-      separators.push({ content: blockLines[i], index: i, type: "require" });
-      currentGroupStart = i + 1;
-    }
+function calculateLength(text: string): number {
+  const lines = text.split("\n");
+  if (lines.length === 1) {
+    return text.length;
   }
-
-  // Add final group
-  if (currentGroupStart < blockLines.length) {
-    groups.push({
-      statements: [],
-      startIndex: currentGroupStart,
-      endIndex: blockLines.length - 1,
-    });
-  }
-
-  return { separators, groups };
+  // For multi-line, use last line length
+  return lines[lines.length - 1].trim().length;
 }
 
-function parseStatements(lines: string[], offset: number): Statement[] {
-  const statements: Statement[] = [];
-  let i = 0;
+function organizeImports(block: ImportBlock, originalText: string): string {
+  const { statements } = block;
 
-  while (i < lines.length) {
-    const line = lines[i].trim();
+  // Separate into categories
+  const allImports: ImportStatement[] = [];
+  const exportStatements: ExportStatement[] = [];
+  const dynamicStatements: DynamicImportStatement[] = [];
+  const commentStatements: CommentStatement[] = [];
 
-    if (line === "" || line.startsWith("//") || line.startsWith("/*")) {
-      i++;
-      continue;
-    }
-
-    // Check if it's a multi-line import/export
+  statements.forEach(stmt => {
     if (
-      (line.startsWith("import ") ||
-        line.startsWith("export {") ||
-        line.startsWith("export type {") ||
-        line.startsWith("export *")) &&
-      line.includes("{") &&
-      !line.includes("}")
+      "node" in stmt &&
+      t.isImportDeclaration((stmt as ImportStatement).node)
     ) {
-      // Multi-line
-      const stmtLines: string[] = [lines[i]];
-      i++;
-      while (i < lines.length && !lines[i].includes("}")) {
-        stmtLines.push(lines[i]);
-        i++;
-      }
-      if (i < lines.length) {
-        stmtLines.push(lines[i]); // Include closing line
-      }
-
-      statements.push({
-        lines: stmtLines,
-        isSingleLine: false,
-        isTypeImport: stmtLines[0].trim().startsWith("import type"),
-        isExport:
-          stmtLines[0].trim().startsWith("export {") ||
-          stmtLines[0].trim().startsWith("export *") ||
-          stmtLines[0].trim().startsWith("export type"),
-        length: 0,
-        originalIndex: offset + (i - stmtLines.length),
-      });
-      i++;
+      const importStmt = stmt as ImportStatement;
+      allImports.push(importStmt);
     } else if (
-      line.startsWith("import ") ||
-      line.startsWith("export {") ||
-      line.startsWith("export type {") ||
-      line.startsWith("export *")
+      "node" in stmt &&
+      (t.isExportNamedDeclaration((stmt as ExportStatement).node) ||
+        t.isExportAllDeclaration((stmt as ExportStatement).node))
     ) {
-      // Single-line
-      statements.push({
-        lines: [lines[i]],
-        isSingleLine: true,
-        isTypeImport: line.startsWith("import type"),
-        isExport:
-          line.startsWith("export {") ||
-          line.startsWith("export *") ||
-          line.startsWith("export type"),
-        length: 0,
-        originalIndex: offset + i,
-      });
-      i++;
-    } else {
-      i++;
-    }
-  }
-
-  return statements;
-}
-
-function sortNamedImports(statement: Statement): void {
-  if (statement.isSingleLine) {
-    const line = statement.lines[0];
-    const match = line.match(/\{([^}]+)\}/);
-    if (match) {
-      const imports = match[1]
-        .split(",")
-        .map(s => s.trim())
-        .filter(s => s);
-      imports.sort();
-      statement.lines[0] = line.replace(
-        /\{([^}]+)\}/,
-        `{ ${imports.join(", ")} }`
-      );
-    }
-  } else {
-    // Multi-line: extract names between braces
-    const allText = statement.lines.join("\n");
-    const match = allText.match(/\{([^}]+)\}/s);
-    if (match) {
-      const imports = match[1]
-        .split(",")
-        .map(s => s.trim())
-        .filter(s => s);
-      imports.sort();
-
-      // Reconstruct multi-line with sorted imports
-      const firstLine = statement.lines[0];
-      const lastLine = statement.lines[statement.lines.length - 1];
-      const indent = "  "; // Default indent
-
-      statement.lines = [
-        firstLine.substring(0, firstLine.indexOf("{") + 1),
-        ...imports.map(imp => `${indent}${imp},`),
-        lastLine,
-      ];
-    }
-  }
-}
-
-function calculateLength(statement: Statement): void {
-  if (statement.isSingleLine) {
-    statement.length = statement.lines[0].length;
-  } else {
-    // Multi-line: use last line length
-    statement.length =
-      statement.lines[statement.lines.length - 1].trim().length;
-  }
-}
-
-function reconstructBlock(
-  groups: Group[],
-  separators: Separator[],
-  typeImports: Statement[]
-): string[] {
-  const result: string[] = [];
-  let typeInserted = false;
-  const typeLength = typeImports.length > 0 ? typeImports[0].length : Infinity;
-
-  let separatorIdx = 0;
-
-  groups.forEach((group, groupIdx) => {
-    // Add statements from group
-    group.statements.forEach(stmt => {
-      // Check if we should insert types here
-      if (!typeInserted && typeImports.length > 1 && stmt.length > typeLength) {
-        result.push("// types");
-        typeImports.forEach(typeStmt => {
-          result.push(...typeStmt.lines);
-        });
-        typeInserted = true;
-      } else if (
-        !typeInserted &&
-        typeImports.length === 1 &&
-        stmt.length > typeLength
+      exportStatements.push(stmt as ExportStatement);
+    } else if (
+      "text" in stmt &&
+      stmt.start !== undefined &&
+      !("node" in stmt)
+    ) {
+      // Check if it's a comment or dynamic import
+      if (
+        stmt.text.trim().startsWith("//") ||
+        stmt.text.trim().startsWith("/*")
       ) {
-        // Single type import, no comment
-        typeImports.forEach(typeStmt => {
-          result.push(...typeStmt.lines);
-        });
-        typeInserted = true;
+        commentStatements.push(stmt as CommentStatement);
+      } else {
+        dynamicStatements.push(stmt as DynamicImportStatement);
       }
-
-      result.push(...stmt.lines);
-    });
-
-    // Check if we should insert types at end of this group
-    if (!typeInserted && typeImports.length > 1) {
-      const lastStmtLength =
-        group.statements.length > 0
-          ? group.statements[group.statements.length - 1].length
-          : 0;
-
-      if (typeLength >= lastStmtLength || groupIdx === groups.length - 1) {
-        result.push("// types");
-        typeImports.forEach(typeStmt => {
-          result.push(...typeStmt.lines);
-        });
-        typeInserted = true;
-      }
-    } else if (!typeInserted && typeImports.length === 1) {
-      const lastStmtLength =
-        group.statements.length > 0
-          ? group.statements[group.statements.length - 1].length
-          : 0;
-
-      if (typeLength >= lastStmtLength || groupIdx === groups.length - 1) {
-        // Single type import, no comment
-        typeImports.forEach(typeStmt => {
-          result.push(...typeStmt.lines);
-        });
-        typeInserted = true;
-      }
-    }
-
-    // Add separator after group if exists
-    if (separatorIdx < separators.length) {
-      result.push(separators[separatorIdx].content);
-      separatorIdx++;
     }
   });
 
-  // If types still not inserted, add at end
-  if (!typeInserted && typeImports.length > 1) {
-    result.push("// types");
-    typeImports.forEach(typeStmt => {
-      result.push(...typeStmt.lines);
+  // Sort named imports within each import statement
+  allImports.forEach(sortNamedImports);
+  exportStatements.forEach(sortNamedExports);
+
+  // Sort by length (type and regular imports together)
+  allImports.sort(compareByLength);
+  exportStatements.sort(compareByLength);
+
+  // Build groups based on separators (comments and dynamic imports)
+  const groups = buildGroups(
+    allImports,
+    exportStatements,
+    commentStatements,
+    dynamicStatements,
+    statements
+  );
+
+  return groups.flat().join("\n");
+}
+
+function sortNamedImports(importStmt: ImportStatement): void {
+  const node = importStmt.node;
+
+  if (node.specifiers && node.specifiers.length > 0) {
+    const defaultImport = node.specifiers.find(s =>
+      t.isImportDefaultSpecifier(s)
+    );
+    const namespaceImport = node.specifiers.find(s =>
+      t.isImportNamespaceSpecifier(s)
+    );
+    const namedImports = node.specifiers.filter(s =>
+      t.isImportSpecifier(s)
+    ) as t.ImportSpecifier[];
+
+    // Sort named imports alphabetically
+    namedImports.sort((a, b) => {
+      const aName = t.isIdentifier(a.imported)
+        ? a.imported.name
+        : (a.imported as t.StringLiteral).value;
+      const bName = t.isIdentifier(b.imported)
+        ? b.imported.name
+        : (b.imported as t.StringLiteral).value;
+      return aName.localeCompare(bName);
     });
-  } else if (!typeInserted && typeImports.length === 1) {
-    // Single type import, no comment
-    typeImports.forEach(typeStmt => {
-      result.push(...typeStmt.lines);
+
+    // Reconstruct specifiers: default, namespace, then named
+    const newSpecifiers = [];
+    if (defaultImport) {
+      newSpecifiers.push(defaultImport);
+    }
+    if (namespaceImport) {
+      newSpecifiers.push(namespaceImport);
+    }
+    newSpecifiers.push(...namedImports);
+
+    node.specifiers = newSpecifiers;
+
+    // Regenerate text
+    const generated = generate(node, {
+      retainLines: false,
+      compact: false,
     });
+
+    importStmt.text = generated.code;
+    importStmt.length = calculateLength(generated.code);
+  }
+}
+
+function sortNamedExports(exportStmt: ExportStatement): void {
+  const node = exportStmt.node;
+
+  if (
+    t.isExportNamedDeclaration(node) &&
+    node.specifiers &&
+    node.specifiers.length > 0
+  ) {
+    const namedExports = node.specifiers.filter(s =>
+      t.isExportSpecifier(s)
+    ) as t.ExportSpecifier[];
+
+    // Sort alphabetically
+    namedExports.sort((a, b) => {
+      const aName = t.isIdentifier(a.exported)
+        ? a.exported.name
+        : (a.exported as t.StringLiteral).value;
+      const bName = t.isIdentifier(b.exported)
+        ? b.exported.name
+        : (b.exported as t.StringLiteral).value;
+      return aName.localeCompare(bName);
+    });
+
+    node.specifiers = namedExports;
+
+    // Regenerate text
+    const generated = generate(node, {
+      retainLines: false,
+      compact: false,
+    });
+
+    exportStmt.text = generated.code;
+    exportStmt.length = calculateLength(generated.code);
+  } else if (t.isExportAllDeclaration(node)) {
+    // Regenerate for consistency
+    const generated = generate(node, {
+      retainLines: false,
+      compact: false,
+    });
+
+    exportStmt.text = generated.code;
+    exportStmt.length = calculateLength(generated.code);
+  }
+}
+
+function compareByLength(
+  a: ImportStatement | ExportStatement,
+  b: ImportStatement | ExportStatement
+): number {
+  if (a.length !== b.length) {
+    return a.length - b.length;
+  }
+  return a.text.localeCompare(b.text);
+}
+
+function buildGroups(
+  imports: ImportStatement[],
+  exports: ExportStatement[],
+  comments: CommentStatement[],
+  dynamics: DynamicImportStatement[],
+  allStatements: any[]
+): string[][] {
+  // Create separators map
+  const separators = [...comments, ...dynamics].sort(
+    (a, b) => a.start - b.start
+  );
+
+  if (separators.length === 0) {
+    // No separators, single group
+    const group = [...imports, ...exports]
+      .sort(compareByLength)
+      .map(s => s.text);
+    return [group];
   }
 
-  return result;
+  // Build groups separated by comments and dynamic imports
+  const groups: string[][] = [];
+  let currentGroup: (ImportStatement | ExportStatement)[] = [];
+  const allSorted = [...imports, ...exports].sort((a, b) => a.start - b.start);
+
+  let sepIndex = 0;
+
+  for (const stmt of allSorted) {
+    // Check if there's a separator before this statement
+    while (
+      sepIndex < separators.length &&
+      separators[sepIndex].end < stmt.start
+    ) {
+      if (currentGroup.length > 0) {
+        // Sort the current group by length before adding
+        currentGroup.sort(compareByLength);
+        groups.push(currentGroup.map(s => s.text));
+        currentGroup = [];
+      }
+      groups.push([separators[sepIndex].text]);
+      sepIndex++;
+    }
+
+    currentGroup.push(stmt);
+  }
+
+  // Add remaining separators
+  while (sepIndex < separators.length) {
+    if (currentGroup.length > 0) {
+      currentGroup.sort(compareByLength);
+      groups.push(currentGroup.map(s => s.text));
+      currentGroup = [];
+    }
+    groups.push([separators[sepIndex].text]);
+    sepIndex++;
+  }
+
+  if (currentGroup.length > 0) {
+    currentGroup.sort(compareByLength);
+    groups.push(currentGroup.map(s => s.text));
+  }
+
+  return groups;
 }
 
 export function deactivate() {}

@@ -1,20 +1,32 @@
 {
   "name": "tidyimports",
   "displayName": "TidyImports",
-  "description": "Automatically sorts import statements by line length (and alphabetically if equal) in a tidy pyramid shape on save. Works with any file type.",
-  "version": "0.0.1",
+  "description": "Automatically organize and format your JavaScript/TypeScript imports on save",
+  "version": "1.0.0",
   "publisher": "FaithDev",
+  "icon": "icon.png",
   "engines": {
-    "vscode": "^1.54.0"
+    "vscode": "^1.75.0"
   },
   "categories": [
+    "Formatters",
     "Other"
   ],
+  "keywords": [
+    "import",
+    "organize",
+    "sort",
+    "format",
+    "typescript",
+    "javascript",
+    "jsx",
+    "tsx"
+  ],
   "activationEvents": [
-    "onStartupFinished",
     "onLanguage:javascript",
     "onLanguage:typescript",
-    "onLanguage:python"
+    "onLanguage:javascriptreact",
+    "onLanguage:typescriptreact"
   ],
   "main": "./dist/extension.js",
   "contributes": {
@@ -43,17 +55,26 @@
     "lint": "eslint src",
     "test": "vscode-test"
   },
+  "bugs": {
+    "url": "https://github.com/ObiFaith/tidyimports-vscode/issues"
+  },
+  "homepage": "https://github.com/ObiFaith/tidyimports-vscode#readme",
+  "license": "MIT",
   "devDependencies": {
-    "@types/vscode": "^1.54.0",
-    "@types/mocha": "^10.0.10",
-    "@types/node": "20.x",
-    "@typescript-eslint/eslint-plugin": "^8.31.1",
-    "@typescript-eslint/parser": "^8.31.1",
-    "eslint": "^9.25.1",
-    "esbuild": "^0.25.3",
-    "npm-run-all": "^4.1.5",
-    "typescript": "^5.8.3",
-    "@vscode/test-cli": "^0.0.11",
-    "@vscode/test-electron": "^2.5.2"
+    "@babel/generator": "^7.28.5",
+    "@babel/parser": "^7.28.5",
+    "@babel/traverse": "^7.28.5",
+    "@babel/types": "^7.28.5",
+    "@types/babel__core": "^7.20.5",
+    "@types/babel__generator": "^7.27.0",
+    "@types/babel__parser": "^7.0.0",
+    "@types/babel__traverse": "^7.28.0",
+    "@types/node": "^25.0.3",
+    "@types/vscode": "^1.107.0",
+    "@typescript-eslint/eslint-plugin": "^8.51.0",
+    "@typescript-eslint/parser": "^8.51.0",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.27.2",
+    "typescript": "^5.9.3"
   }
 }
